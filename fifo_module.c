@@ -57,7 +57,7 @@ int CloseFifo(struct inode *pinode, struct file *pfile)
 ssize_t ReadFifo(struct file *pfile, char __user *buffer, size_t length, loff_t *offset)
 {
 	int ret;
-	char buff[20];
+	char temp_buff[20];
 	long int len = 0;
 
 	if (end_read)
@@ -75,17 +75,17 @@ ssize_t ReadFifo(struct file *pfile, char __user *buffer, size_t length, loff_t 
 		if(wait_event_interruptible(read_queue,(element_cnt > 0)))
 			return -ERESTARTSYS;
 		if(down_interruptible(&sem))
-			return -ERESTARTSYS;
+		return -ERESTARTSYS;
 	}
 
 	
 	if(element_cnt > 0)
 	{
-		len = scnprintf(buff, strlen(buff), "%d ", fifo_buffer[read_pos]);
-		ret = copy_to_user(buffer, buff, len);
+		len = scnprintf(temp_buff, strlen(temp_buff), "%d ", fifo_buffer[read_pos]);
+		ret = copy_to_user(buffer, temp_buff, len);
 		if(ret)
 			return -EFAULT;
-		printk(KERN_INFO "Succesfully read %s from FIFO buffer.\n", buff);
+		printk(KERN_INFO "Succesfully read %s from FIFO buffer.\n", temp_buff);
 		
 		if (read_pos == (BUFF_SIZE-1))
 		{
@@ -94,10 +94,8 @@ ssize_t ReadFifo(struct file *pfile, char __user *buffer, size_t length, loff_t 
 		{
 			read_pos++;
 		}
-		element_cnt--;
 		
-		end_read = 1;
-		return len;
+		element_cnt--;
 	}
 	else
 	{
@@ -114,16 +112,16 @@ ssize_t ReadFifo(struct file *pfile, char __user *buffer, size_t length, loff_t 
 
 ssize_t WriteFifo(struct file *pfile, const char __user *buffer, size_t length, loff_t *offset)
 {
-	char buff[BUFF_SIZE];
+	char temp_buff[BUFF_SIZE];
 	int value;
 	int ret;
 	
-	ret = copy_from_user(buff, buffer, length);
+	ret = copy_from_user(temp_buff, buffer, length);
 	
 	if(ret)
 		return -EFAULT;
 	
-	buff[length-1] = '\0';
+	temp_buff[length-1] = '\0';
 	
 	if(down_interruptible(&sem))
 		return -ERESTARTSYS;
@@ -139,7 +137,7 @@ ssize_t WriteFifo(struct file *pfile, const char __user *buffer, size_t length, 
 
 	if(element_cnt < BUFF_SIZE)
 	{
-		ret = sscanf(buff,"%d",&value);
+		ret = sscanf(temp_buff,"%d",&value);
 		if(ret==1)//one parameter parsed in sscanf
 		{
 			fifo_buffer[write_pos] = value;
@@ -152,6 +150,7 @@ ssize_t WriteFifo(struct file *pfile, const char __user *buffer, size_t length, 
 			{
 				write_pos++;
 			}
+			
 			element_cnt++;
 		}
 		else
@@ -172,7 +171,7 @@ ssize_t WriteFifo(struct file *pfile, const char __user *buffer, size_t length, 
 
 static int __init FifoInit(void)
 {
-	sema_init(&sem, 1);
+    sema_init(&sem, 1);
 	init_waitqueue_head(&write_queue);
 	init_waitqueue_head(&read_queue);
 	
