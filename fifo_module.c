@@ -23,7 +23,7 @@ static struct device *fifo_device;
 static struct cdev *fifo_cdev;
 
 static int binToDec(char binary_string[], int num_of_bits);
-// static void parseInput(char p_input_str[]);
+static void parseInput(char p_input_str[], int p_input_len);
 
 int OpenFifo(struct inode *pinode, struct file *pfile);
 int CloseFifo(struct inode *pinode, struct file *pfile);
@@ -35,6 +35,9 @@ static int end_read = 0;
 static unsigned char read_pos    = 0u;
 static unsigned char write_pos   = 0u;
 static unsigned char element_cnt = 0u;
+
+static int temp_values[BUFF_SIZE];
+static int temp_value_cnt = 0u;
 
 static unsigned char fifo_buffer[BUFF_SIZE];
 
@@ -124,7 +127,7 @@ ssize_t WriteFifo(struct file *pfile, const char __user *buffer, size_t length, 
 {
 	char temp_buff[MAX_STR_SIZE];
 
-	int value;
+	int current_temp_value;
 	int ret;
 	
 	ret = copy_from_user(temp_buff, buffer, length);
@@ -133,45 +136,42 @@ ssize_t WriteFifo(struct file *pfile, const char __user *buffer, size_t length, 
 	
 	temp_buff[length-1] = '\0';
 	
-	value = binToDec(temp_buff, (length-1));
-	
-	if (value == ERROR)
-	{
-		printk(KERN_WARNING "Invalid input format.\n");
-		return -EFAULT;
-	}
-	
-	if(down_interruptible(&sem)) return -ERESTARTSYS;
+	parseInput(temp_buff, length);
 
-	while(element_cnt == BUFF_SIZE)
+	for (current_temp_value = 0; current_temp_value < temp_value_cnt; current_temp_value++)
 	{
-		up(&sem);
-		if(wait_event_interruptible(write_queue,(element_cnt < BUFF_SIZE))) return -ERESTARTSYS;
 		if(down_interruptible(&sem)) return -ERESTARTSYS;
-	}
 
-	if(element_cnt < BUFF_SIZE)
-	{
-		fifo_buffer[write_pos] = value;
-		printk(KERN_INFO "Succesfully wrote value %d", value);
-			
-		if (write_pos == (BUFF_SIZE-1))
+		while(element_cnt == BUFF_SIZE)
 		{
-			write_pos = 0;
-		} else
-		{
-			write_pos++;
+			up(&sem);
+			if(wait_event_interruptible(write_queue,(element_cnt < BUFF_SIZE))) return -ERESTARTSYS;
+			if(down_interruptible(&sem)) return -ERESTARTSYS;
 		}
+		
+		if(element_cnt < BUFF_SIZE)
+		{
+			fifo_buffer[write_pos] = temp_values[current_temp_value];
+			printk(KERN_INFO "Succesfully wrote value %d", temp_values[current_temp_value]);
 			
-		element_cnt++;
+			if (write_pos == (BUFF_SIZE-1))
+			{
+				write_pos = 0;
+			} else
+			{
+			write_pos++;
+			}
+			
+			element_cnt++;
+		}
+		else
+		{
+			printk(KERN_WARNING "Fifo is full.\n");
+		}
+		
+		up(&sem);
+		wake_up_interruptible(&read_queue);
 	}
-	else
-	{
-		printk(KERN_WARNING "Fifo is full.\n");
-	}
-	
-	up(&sem);
-	wake_up_interruptible(&read_queue);
 	
 	return length;
 }
@@ -248,7 +248,7 @@ static int binToDec(char binary_string[], int num_of_bits)
     int result = 0;
 	int bit_cnt;
     
-    for (bit_cnt = 2; bit_cnt < num_of_bits; bit_cnt++)
+    for (bit_cnt = 0; bit_cnt < num_of_bits; bit_cnt++)
     {
 		if ((binary_string[bit_cnt] < '0') || (binary_string[bit_cnt] > '1'))
         {
@@ -260,6 +260,58 @@ static int binToDec(char binary_string[], int num_of_bits)
     }
 
     return result;
+}
+
+static void parseInput(char p_input_str[], int p_input_len)
+{
+    char temp_bin[BIN_FORMAT_SIZE];
+    int input_len = p_input_len;
+    
+	temp_value_cnt = 0u;
+	
+    int value = 0;
+    char input_end_reached = b_FALSE;
+	
+	int input_char_cnt;
+    
+    for (input_char_cnt = 0; input_char_cnt < input_len; input_char_cnt++)
+    {
+        if (p_input_str[input_char_cnt] == ';' || p_input_str[input_char_cnt] == '\0')
+        {
+            if (p_input_str[input_char_cnt] == '\0')
+            {
+                input_end_reached = b_TRUE;
+            }
+            
+            if ((input_char_cnt - BIN_FORMAT_SIZE - 2) >= 0)
+            {
+                if (p_input_str[(input_char_cnt - (int)BIN_FORMAT_SIZE - 2)] == '0' && p_input_str[input_char_cnt - BIN_FORMAT_SIZE - 1] == 'b')
+                {
+                    strncpy(temp_bin, &p_input_str[input_char_cnt - BIN_FORMAT_SIZE], BIN_FORMAT_SIZE);
+                    value = binToDec(temp_bin, BIN_FORMAT_SIZE);
+                    if (value == ERROR)
+                    {
+                        printk(KERN_WARNING "Invalid format.\n");
+                    } else
+                    {
+                        temp_values[temp_value_cnt] = value;
+						temp_value_cnt++;
+                    }
+                } else
+                {
+                    printk(KERN_WARNING "Invalid format.\n");
+                }   
+            } else 
+            {
+                printk(KERN_WARNING "Invalid format.\n");   
+            }
+        }
+        
+        if (input_end_reached == b_TRUE)
+        {
+            break;
+        }
+    }
 }
 
 module_init(FifoInit);
