@@ -7,13 +7,13 @@
 #include <linux/semaphore.h>
 #include <linux/string.h>
 
-#define BUFF_SIZE               (16u)
-#define MAX_STR_SIZE        (64u)
-#define BIN_FORMAT_SIZE  (8u)
-#define b_TRUE                     (1u)
-#define b_FALSE                   (0u)
-#define ERROR                      (-1)
-
+#define BUFF_SIZE                                    (16u)
+#define MAX_STR_SIZE                            (64u)
+#define BIN_FORMAT_SIZE                      (8u)
+#define READ_CHANGE_FORMAT_SIZE (5u)
+#define b_TRUE                                         (1u)
+#define b_FALSE                                       (0u)
+#define ERROR                                          (-1)
 
 MODULE_LICENSE("Dual BSD/GPL");
 
@@ -23,7 +23,7 @@ static struct device *fifo_device;
 static struct cdev *fifo_cdev;
 
 static int binToDec(char binary_string[], int num_of_bits);
-static void parseInput(char p_input_str[], int p_input_len);
+static int parseInput(char p_input_str[], int p_input_len);
 
 int OpenFifo(struct inode *pinode, struct file *pfile);
 int CloseFifo(struct inode *pinode, struct file *pfile);
@@ -31,6 +31,7 @@ ssize_t ReadFifo(struct file *pfile, char __user *buffer, size_t length, loff_t 
 ssize_t WriteFifo(struct file *pfile, const char __user *buffer, size_t length, loff_t *offset);
 
 static int end_read = 0;
+static size_t read_count = 1;
 
 static unsigned char read_pos    = 0u;
 static unsigned char write_pos   = 0u;
@@ -69,7 +70,7 @@ int CloseFifo(struct inode *pinode, struct file *pfile)
 
 ssize_t ReadFifo(struct file *pfile, char __user *buffer, size_t length, loff_t *offset)
 {
-	int ret;
+	int ret, num_of_reads;
 	char temp_buff[MAX_STR_SIZE];
 	long int len = 0;
 
@@ -79,45 +80,48 @@ ssize_t ReadFifo(struct file *pfile, char __user *buffer, size_t length, loff_t 
 		return 0;
 	}
 
-	if(down_interruptible(&sem)) return -ERESTARTSYS;
-	
-	while(element_cnt == 0)
+	for (num_of_reads = 0; num_of_reads < read_count; num_of_reads++)
 	{
-		up(&sem);	
-		
-		if(wait_event_interruptible(read_queue,(element_cnt > 0))) return -ERESTARTSYS;
-		
 		if(down_interruptible(&sem)) return -ERESTARTSYS;
+	
+		while(element_cnt == 0)
+		{
+			up(&sem);	
+		
+			if(wait_event_interruptible(read_queue,(element_cnt > 0))) return -ERESTARTSYS;
+		
+			if(down_interruptible(&sem)) return -ERESTARTSYS;
+		}
+	
+		if(element_cnt > 0)
+		{
+			len = scnprintf(temp_buff, strlen(temp_buff), "%d ", fifo_buffer[read_pos]);
+			ret = copy_to_user(buffer, temp_buff, len);
+		
+			if(ret) return -EFAULT;
+		
+			printk(KERN_INFO "Succesfully read %s from FIFO buffer.\n", temp_buff);
+		
+			if (read_pos == (BUFF_SIZE-1))
+			{
+				read_pos = 0;
+			} else
+			{
+			read_pos++;
+			}
+		
+			element_cnt--;
+		}
+		else
+		{
+			printk(KERN_WARNING "FIFO is empty.\n");
+			return 0;
+		}
+	
+		up(&sem);
+		wake_up_interruptible(&write_queue);	
 	}
 
-	
-	if(element_cnt > 0)
-	{
-		len = scnprintf(temp_buff, strlen(temp_buff), "%d ", fifo_buffer[read_pos]);
-		ret = copy_to_user(buffer, temp_buff, len);
-		
-		if(ret) return -EFAULT;
-		
-		printk(KERN_INFO "Succesfully read %s from FIFO buffer.\n", temp_buff);
-		
-		if (read_pos == (BUFF_SIZE-1))
-		{
-			read_pos = 0;
-		} else
-		{
-			read_pos++;
-		}
-		
-		element_cnt--;
-	}
-	else
-	{
-		printk(KERN_WARNING "FIFO is empty.\n");
-		return 0;
-	}
-	
-	up(&sem);
-	wake_up_interruptible(&write_queue);
 	end_read = 1;
 	
 	return len;
@@ -136,8 +140,10 @@ ssize_t WriteFifo(struct file *pfile, const char __user *buffer, size_t length, 
 	
 	temp_buff[length-1] = '\0';
 	
-	parseInput(temp_buff, length);
-
+	ret = parseInput(temp_buff, length);
+	
+	if (ret) return -EFAULT;
+	
 	for (current_temp_value = 0; current_temp_value < temp_value_cnt; current_temp_value++)
 	{
 		if(down_interruptible(&sem)) return -ERESTARTSYS;
@@ -262,7 +268,7 @@ static int binToDec(char binary_string[], int num_of_bits)
     return result;
 }
 
-static void parseInput(char p_input_str[], int p_input_len)
+static int parseInput(char p_input_str[], int p_input_len)
 {
     char temp_bin[BIN_FORMAT_SIZE];
     int input_len = p_input_len;
@@ -271,6 +277,22 @@ static void parseInput(char p_input_str[], int p_input_len)
 	
     int value = 0;
     char input_end_reached = b_FALSE;
+	
+	strncpy(temp_bin, &p_input_str[0], READ_CHANGE_FORMAT_SIZE);
+	
+	if (temp_bin[0] == 'n' && temp_bin[1] == 'u' && temp_bin[2] == 'm' && temp_bin[3] == '=')
+	{
+		if ((temp_bin[4] >= '1') && (temp_bin[4] <= '9'))
+		{
+			read_count = (temp_bin[4] - '0');
+			printk(KERN_INFO "Read count changed to %d.\n", read_count);
+			return 0;
+		} else
+		{
+            printk(KERN_WARNING "Invalid format.\n");
+			return ERROR;
+		}
+	}
 	
 	int input_char_cnt;
     
@@ -303,7 +325,7 @@ static void parseInput(char p_input_str[], int p_input_len)
                 }   
             } else 
             {
-                printk(KERN_WARNING "Invalid format.\n");   
+                printk(KERN_WARNING "Invalid format.\n");
             }
         }
         
@@ -312,6 +334,8 @@ static void parseInput(char p_input_str[], int p_input_len)
             break;
         }
     }
+	
+	return 0;
 }
 
 module_init(FifoInit);
