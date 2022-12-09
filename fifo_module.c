@@ -133,7 +133,13 @@ ssize_t WriteFifo(struct file *pfile, const char __user *buffer, size_t length, 
 	
 	temp_buff[length-1] = '\0';
 	
-	value = binToDec(temp_buff, length);
+	value = binToDec(temp_buff, (length-1));
+	
+	if (value == ERROR)
+	{
+		printk(KERN_WARNING "Invalid input format.\n");
+		return -EFAULT;
+	}
 	
 	if(down_interruptible(&sem)) return -ERESTARTSYS;
 
@@ -242,9 +248,12 @@ static int binToDec(char binary_string[], int num_of_bits)
     int result = 0;
 	int bit_cnt;
     
-    for (bit_cnt = 0; bit_cnt < num_of_bits; bit_cnt++)
+    for (bit_cnt = 2; bit_cnt < num_of_bits; bit_cnt++)
     {
-		if (binary_string[bit_cnt] == '1')
+		if ((binary_string[bit_cnt] < '0') || (binary_string[bit_cnt] > '1'))
+        {
+            return ERROR;
+        } else if (binary_string[bit_cnt] == '1')
         {
             result |= (1 << (num_of_bits - bit_cnt - 1));
         }
