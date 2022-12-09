@@ -5,8 +5,15 @@
 #include <linux/cdev.h>
 #include <linux/uaccess.h>
 #include <linux/semaphore.h>
+#include <linux/string.h>
 
-#define BUFF_SIZE 16
+#define BUFF_SIZE               (16u)
+#define MAX_STR_SIZE        (64u)
+#define BIN_FORMAT_SIZE  (8u)
+#define b_TRUE                     (1u)
+#define b_FALSE                   (0u)
+#define ERROR                      (-1)
+
 
 MODULE_LICENSE("Dual BSD/GPL");
 
@@ -14,6 +21,9 @@ dev_t fifo_dev_id;
 static struct class *fifo_class;
 static struct device *fifo_device;
 static struct cdev *fifo_cdev;
+
+static int binToDec(char binary_string[], int num_of_bits);
+// static void parseInput(char p_input_str[]);
 
 int OpenFifo(struct inode *pinode, struct file *pfile);
 int CloseFifo(struct inode *pinode, struct file *pfile);
@@ -57,7 +67,7 @@ int CloseFifo(struct inode *pinode, struct file *pfile)
 ssize_t ReadFifo(struct file *pfile, char __user *buffer, size_t length, loff_t *offset)
 {
 	int ret;
-	char temp_buff[20];
+	char temp_buff[MAX_STR_SIZE];
 	long int len = 0;
 
 	if (end_read)
@@ -66,16 +76,15 @@ ssize_t ReadFifo(struct file *pfile, char __user *buffer, size_t length, loff_t 
 		return 0;
 	}
 
-	if(down_interruptible(&sem))
-		return -ERESTARTSYS;
+	if(down_interruptible(&sem)) return -ERESTARTSYS;
 	
 	while(element_cnt == 0)
 	{
 		up(&sem);	
-		if(wait_event_interruptible(read_queue,(element_cnt > 0)))
-			return -ERESTARTSYS;
-		if(down_interruptible(&sem))
-		return -ERESTARTSYS;
+		
+		if(wait_event_interruptible(read_queue,(element_cnt > 0))) return -ERESTARTSYS;
+		
+		if(down_interruptible(&sem)) return -ERESTARTSYS;
 	}
 
 	
@@ -83,8 +92,9 @@ ssize_t ReadFifo(struct file *pfile, char __user *buffer, size_t length, loff_t 
 	{
 		len = scnprintf(temp_buff, strlen(temp_buff), "%d ", fifo_buffer[read_pos]);
 		ret = copy_to_user(buffer, temp_buff, len);
-		if(ret)
-			return -EFAULT;
+		
+		if(ret) return -EFAULT;
+		
 		printk(KERN_INFO "Succesfully read %s from FIFO buffer.\n", temp_buff);
 		
 		if (read_pos == (BUFF_SIZE-1))
@@ -112,51 +122,42 @@ ssize_t ReadFifo(struct file *pfile, char __user *buffer, size_t length, loff_t 
 
 ssize_t WriteFifo(struct file *pfile, const char __user *buffer, size_t length, loff_t *offset)
 {
-	char temp_buff[BUFF_SIZE];
+	char temp_buff[MAX_STR_SIZE];
+
 	int value;
 	int ret;
 	
 	ret = copy_from_user(temp_buff, buffer, length);
 	
-	if(ret)
-		return -EFAULT;
+	if(ret) return -EFAULT;
 	
 	temp_buff[length-1] = '\0';
 	
-	if(down_interruptible(&sem))
-		return -ERESTARTSYS;
+	value = binToDec(temp_buff, length);
+	
+	if(down_interruptible(&sem)) return -ERESTARTSYS;
 
 	while(element_cnt == BUFF_SIZE)
 	{
 		up(&sem);
-		if(wait_event_interruptible(write_queue,(element_cnt < BUFF_SIZE)))
-			return -ERESTARTSYS;
-		if(down_interruptible(&sem))
-			return -ERESTARTSYS;
+		if(wait_event_interruptible(write_queue,(element_cnt < BUFF_SIZE))) return -ERESTARTSYS;
+		if(down_interruptible(&sem)) return -ERESTARTSYS;
 	}
 
 	if(element_cnt < BUFF_SIZE)
 	{
-		ret = sscanf(temp_buff,"%d",&value);
-		if(ret==1)//one parameter parsed in sscanf
-		{
-			fifo_buffer[write_pos] = value;
-			printk(KERN_INFO "Succesfully wrote value %d", value);
+		fifo_buffer[write_pos] = value;
+		printk(KERN_INFO "Succesfully wrote value %d", value);
 			
-			if (write_pos == (BUFF_SIZE-1))
-			{
-				write_pos = 0;
-			} else
-			{
-				write_pos++;
-			}
-			
-			element_cnt++;
-		}
-		else
+		if (write_pos == (BUFF_SIZE-1))
 		{
-			printk(KERN_WARNING "Wrong command format\n");
+			write_pos = 0;
+		} else
+		{
+			write_pos++;
 		}
+			
+		element_cnt++;
 	}
 	else
 	{
@@ -234,6 +235,22 @@ static void __exit FifoExit(void)
 	class_destroy(fifo_class);
 	unregister_chrdev_region(fifo_dev_id,1);
 	printk(KERN_INFO "'Goodbye, cruel world' FIFO buffer said right before its sad life ended.\n");
+}
+
+static int binToDec(char binary_string[], int num_of_bits) 
+{
+    int result = 0;
+	int bit_cnt;
+    
+    for (bit_cnt = 0; bit_cnt < num_of_bits; bit_cnt++)
+    {
+		if (binary_string[bit_cnt] == '1')
+        {
+            result |= (1 << (num_of_bits - bit_cnt - 1));
+        }
+    }
+
+    return result;
 }
 
 module_init(FifoInit);
