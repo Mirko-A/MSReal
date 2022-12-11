@@ -40,10 +40,9 @@ static int BinToDec(char binary_string[], int num_of_bits);
 *                   2) If the format is "num=x" where x is a number between 1 and 16, function parses that number as an integer\n
 *                   and sets a global variabled called read_count to that number.                  
 * @param	char p_input_str[]  -> string which needs to be parsed.
-* @param	int num_of_bits		-> length of the string which needs to be parsed.
 * @return	Returns OK if parsing was successful or ERROR if the format is invalid.
 */
-static int ParseInput(char p_input_str[], int p_input_len);
+static int ParseInput(char p_input_str[]);
 
 int OpenFifo(struct inode *pinode, struct file *pfile);
 int CloseFifo(struct inode *pinode, struct file *pfile);
@@ -51,22 +50,22 @@ ssize_t ReadFifo(struct file *pfile, char __user *buffer, size_t length, loff_t 
 ssize_t WriteFifo(struct file *pfile, const char __user *buffer, size_t length, loff_t *offset);
 
 
-static int end_read = 0;								///< Indicates whether ReadFifo should stop reading or not.
-static size_t read_count = 1;						///< Indicates how many values should be read from FIFO buffer.
+static int end_read = 0;										///< Indicates whether ReadFifo should stop reading or not.
+static size_t read_count = 1;								///< Indicates how many values should be read from FIFO buffer.
 
-static unsigned char read_pos    = 0u;		///< Current read position of FIFO buffer.
-static unsigned char write_pos   = 0u;		///< Current write position of FIFO buffer.
-static unsigned char element_cnt = 0u;	///< Number of elements currently inside FIFO buffer.
+static unsigned char read_pos    = 0u;				///< Current read position of FIFO buffer.
+static unsigned char write_pos   = 0u;				///< Current write position of FIFO buffer.
+static unsigned char element_cnt = 0u;			///< Number of elements currently inside FIFO buffer.
 
-static int temp_values[BUFF_SIZE];			///< Temporary buffer to store integer values after parsing them from user-input but before storing them inside FIFO buffer.
-static int temp_value_cnt = 0u;					///< Number of values inside temp_values[] buffer ie. number of values to write into FIFO buffer.
+static int temp_values[BUFF_SIZE] = { 0 };		///< Temporary buffer to store integer values after parsing them from user-input but before storing them inside FIFO buffer.
+static int temp_value_cnt = 0u;							///< Number of values inside temp_values[] buffer ie. number of values to write into FIFO buffer.
 
-static unsigned char fifo_buffer[BUFF_SIZE];
+static unsigned char fifo_buffer[BUFF_SIZE] = { 0 };
 
 static struct semaphore sem;
 
-static wait_queue_head_t read_queue;		///< Wait queue for processes trying to read from empty FIFO.
-static wait_queue_head_t write_queue;		///< Wait queue for processes trying to write into full FIFO.
+static wait_queue_head_t read_queue;				///< Wait queue for processes trying to read from empty FIFO.
+static wait_queue_head_t write_queue;				///< Wait queue for processes trying to write into full FIFO.
 
 struct file_operations fifo_fops =
 {
@@ -91,8 +90,10 @@ int CloseFifo(struct inode *pinode, struct file *pfile)
 
 ssize_t ReadFifo(struct file *pfile, char __user *buffer, size_t length, loff_t *offset)
 {
-	int ret, num_of_reads;
-	char temp_buff[MAX_STR_SIZE];
+	int ret;
+	int num_of_reads;
+	
+	char temp_buff[MAX_STR_SIZE] = { 0 };
 	long int len = 0;
 	
 	// cat fifo_module will try to read from file as long as the return value is not 0 so we return 0 (OK) after reading once.
@@ -130,7 +131,7 @@ ssize_t ReadFifo(struct file *pfile, char __user *buffer, size_t length, loff_t 
 		
 			if(ret) return -EFAULT;
 		
-			printk(KERN_INFO "Succesfully read %s from FIFO buffer.\n", temp_buff);
+			printk(KERN_INFO "Succesfully read %d from FIFO buffer.\n", fifo_buffer[read_pos]);
 		
 			// Update read position in a circular manner
 			if (read_pos == (BUFF_SIZE-1))
@@ -138,7 +139,7 @@ ssize_t ReadFifo(struct file *pfile, char __user *buffer, size_t length, loff_t 
 				read_pos = 0;
 			} else
 			{
-			read_pos++;
+				read_pos++;
 			}
 		
 			element_cnt--;
@@ -161,7 +162,7 @@ ssize_t ReadFifo(struct file *pfile, char __user *buffer, size_t length, loff_t 
 
 ssize_t WriteFifo(struct file *pfile, const char __user *buffer, size_t length, loff_t *offset)
 {
-	char temp_buff[MAX_STR_SIZE];
+	char temp_buff[MAX_STR_SIZE] = { 0 };
 
 	int current_temp_value;
 	int ret;
@@ -172,7 +173,7 @@ ssize_t WriteFifo(struct file *pfile, const char __user *buffer, size_t length, 
 	
 	temp_buff[length-1] = '\0';
 	
-	ret = ParseInput(temp_buff, length);
+	ret = ParseInput(temp_buff);
 	
 	if (ret) return -EFAULT;
 	
@@ -195,7 +196,7 @@ ssize_t WriteFifo(struct file *pfile, const char __user *buffer, size_t length, 
 		if(element_cnt < BUFF_SIZE)
 		{
 			fifo_buffer[write_pos] = temp_values[current_temp_value];
-			printk(KERN_INFO "Succesfully wrote value %d", temp_values[current_temp_value]);
+			printk(KERN_INFO "Succesfully wrote value %d.", temp_values[current_temp_value]);
 			
 			// Update write position in circular manner
 			if (write_pos == (BUFF_SIZE-1))
@@ -308,40 +309,37 @@ static int BinToDec(char binary_string[], int num_of_bits)
     return result;
 }
 
-static int ParseInput(char p_input_str[], int p_input_len)
+static int ParseInput(char p_input_str[])
 {
-    char temp_bin[BIN_FORMAT_SIZE];
-    int input_len = p_input_len;
+    int input_len;
 	int temp_read_count;
 	int input_char_cnt;
     int value;
+	int ret;
 	
-	char input_end_reached = b_FALSE;
+	char temp_bin[BIN_FORMAT_SIZE] = { 0 };
+	
+	input_len = strlen(p_input_str);
 	
 	// Reset number of temporary values extracted from user input
 	temp_value_cnt = 0u; 
 	
 	// Check if user requested to update read count
-	strncpy(temp_bin, &p_input_str[0], READ_CHANGE_FORMAT_SIZE);
+	strncpy(temp_bin, p_input_str, READ_CHANGE_FORMAT_SIZE);
 	
-	if (temp_bin[0] == 'n' && temp_bin[1] == 'u' && temp_bin[2] == 'm' && temp_bin[3] == '=')
+	ret = sscanf(temp_bin, "num=%d", &temp_read_count);
+	
+    if (ret)
 	{
-		sscanf(temp_bin, "%d", &temp_read_count);
-		
-		if ((temp_read_count >= 1) && (temp_read_count <= 16))
-		{
-			// Read count changed successfully, return OK
-			read_count = temp_read_count;
-			printk(KERN_INFO "Read count changed to %lu.\n", read_count);
-			return OK;
-		} else
-		{
-			// Incorrect format
-            printk(KERN_WARNING "Read count must be between 1 and 16.\n");
-			return ERROR;
-		}
+		read_count = (size_t) temp_read_count;
+		printk(KERN_INFO "Read count changed to %lu.\n", read_count);
+		return OK;
+	} else if ( (temp_bin[0] == 'n') && (temp_bin[1] == 'u') && (temp_bin[2] == 'm') && (temp_bin[3] == '=') )
+	{
+        printk(KERN_WARNING "Invalid format. Read count must be 0-9. \n");
+		return ERROR;
 	}
-    
+	
 	// Scan every character from user input until we reach ';' or '\0'
     for (input_char_cnt = 0; input_char_cnt < input_len; input_char_cnt++)
     {
@@ -350,14 +348,14 @@ static int ParseInput(char p_input_str[], int p_input_len)
 			// Check if end of user input is reached
             if (p_input_str[input_char_cnt] == '\0')
             {
-                input_end_reached = b_TRUE;
+                break;
             }
             
 			// Check if user input format is correct
             if ( (input_char_cnt - BIN_FORMAT_SIZE - 2) >= 0 )
             {	// 								 0b10110111                                                                                          0b10110111
 				//								 ^ check                                                                                                   ^ check
-                if ( (p_input_str[(input_char_cnt - (int)BIN_FORMAT_SIZE - 2)] == '0') && (p_input_str[input_char_cnt - (int)BIN_FORMAT_SIZE - 1] == 'b') )
+                if ( (p_input_str[(input_char_cnt - (int) BIN_FORMAT_SIZE - 2)] == '0') && (p_input_str[input_char_cnt - (int) BIN_FORMAT_SIZE - 1] == 'b') )
                 {
 					// Extract just the bits of a binary number
                     strncpy(temp_bin, &p_input_str[input_char_cnt - BIN_FORMAT_SIZE], BIN_FORMAT_SIZE);
@@ -365,7 +363,7 @@ static int ParseInput(char p_input_str[], int p_input_len)
 					
                     if (value == ERROR)
                     {
-                        printk(KERN_WARNING "Invalid format.\n");
+						printk(KERN_WARNING "Invalid format. Format is: 0bxxxxxxxx. Each x must be '0' or '1'.\n");
                     } else
                     {
 						// Value successfully converted, place it in a temporary buffer and increment temp_value_cnt
@@ -374,17 +372,12 @@ static int ParseInput(char p_input_str[], int p_input_len)
                     }
                 } else
                 {
-                    printk(KERN_WARNING "Invalid format.\n");
+                    printk(KERN_WARNING "Invalid format. Format is: 0bxxxxxxxx. Each x must be '0' or '1'.\n");
                 }   
             } else 
             {
-                printk(KERN_WARNING "Invalid format.\n");
+                printk(KERN_WARNING "Invalid format. Input too short.\n");
             }
-        }
-        
-        if (input_end_reached == b_TRUE)
-        {
-            break;
         }
     }
 	
