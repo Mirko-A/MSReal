@@ -7,14 +7,14 @@
 #include <linux/semaphore.h>
 #include <linux/string.h>
 
-#define BUFF_SIZE                                    (16u)
-#define MAX_STR_SIZE                            (64u)
-#define BIN_FORMAT_SIZE                      (8u)
+#define BUFF_SIZE               (16u)
+#define MAX_STR_SIZE            (64u)
+#define BIN_FORMAT_SIZE         (8u)
 #define READ_CHANGE_FORMAT_SIZE (5u)
-#define b_TRUE                                         (1u)
-#define b_FALSE                                       (0u)
-#define OK												   (0u)
-#define ERROR                                          (-1)
+#define b_TRUE                  (1u)
+#define b_FALSE                 (0u)
+#define OK                      (0u)
+#define ERROR                   (-1)
 
 MODULE_LICENSE("Dual BSD/GPL");
 
@@ -341,21 +341,15 @@ static int ParseInput(char p_input_str[])
 	}
 	
 	// Scan every character from user input until we reach ';' or '\0'
-    for (input_char_cnt = 0; input_char_cnt < input_len; input_char_cnt++)
+    for (input_char_cnt = 0; input_char_cnt <= input_len; input_char_cnt++)
     {
         if (p_input_str[input_char_cnt] == ';' || p_input_str[input_char_cnt] == '\0')
-        {
-			// Check if end of user input is reached
-            if (p_input_str[input_char_cnt] == '\0')
-            {
-                break;
-            }
-            
+        {   
 			// Check if user input format is correct
             if ( (input_char_cnt - BIN_FORMAT_SIZE - 2) >= 0 )
-            {	// 								 0b10110111                                                                                          0b10110111
-				//								 ^ check                                                                                                   ^ check
-                if ( (p_input_str[(input_char_cnt - (int) BIN_FORMAT_SIZE - 2)] == '0') && (p_input_str[input_char_cnt - (int) BIN_FORMAT_SIZE - 1] == 'b') )
+            {	//                     0b10110111                                                     0b10110111
+				//                     ^ check                                                         ^ check
+                if ( (p_input_str[(input_char_cnt - (int)BIN_FORMAT_SIZE - 2)] == '0') && (p_input_str[input_char_cnt - (int)BIN_FORMAT_SIZE - 1] == 'b') )
                 {
 					// Extract just the bits of a binary number
                     strncpy(temp_bin, &p_input_str[input_char_cnt - BIN_FORMAT_SIZE], BIN_FORMAT_SIZE);
@@ -377,6 +371,13 @@ static int ParseInput(char p_input_str[])
             } else 
             {
                 printk(KERN_WARNING "Invalid format. Input too short.\n");
+				return ERROR;
+            }
+
+			// Check if end of user input is reached
+            if (p_input_str[input_char_cnt] == '\0')
+            {
+                break;
             }
         }
     }
